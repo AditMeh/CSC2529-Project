@@ -68,7 +68,7 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "harmful"), transform=val_transform)
     val_loader = torch.utils.data.DataLoader(
         dataset_val,
         batch_size=args.batch_size_per_gpu,
@@ -77,7 +77,11 @@ def eval_linear(args):
     )
 
     if args.evaluate:
-        utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size)
+        # utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size)
+        utils.restart_from_checkpoint(
+            os.path.join(args.output_dir, "checkpoint.pth.tar"),
+            state_dict=linear_classifier,
+        )
         test_stats = validate_network(val_loader, model, linear_classifier, args.n_last_blocks, args.avgpool_patchtokens)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
