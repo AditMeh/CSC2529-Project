@@ -121,7 +121,7 @@ def get_args_parser():
     # Misc
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
         help='Please specify path to the ImageNet training data.')
-    parser.add_argument('--weights_dir', default=".", type=str, help='Path to load logs and checkpoints.')
+    parser.add_argument('--ckpt_path', default=".", type=str, help='Path to checkpoint for loading.')
     parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
@@ -142,6 +142,8 @@ def train_dino(args):
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # ============ preparing data ... ============
     transform = DataAugmentationDINO(
@@ -266,17 +268,19 @@ def train_dino(args):
     print(f"Loss, optimizer and schedulers ready.")
 
     # ============ optionally resume training ... ============
-    to_restore = {"epoch": 0}
-    utils.restart_from_checkpoint(
-        os.path.join(args.weights_dir, "checkpoint.pth"),
-        run_variables=to_restore,
-        student=student,
-        teacher=teacher,
-        optimizer=optimizer,
-        fp16_scaler=fp16_scaler,
-        dino_loss=dino_loss,
-    )
-    start_epoch = to_restore["epoch"]
+    start_epoch = 0
+    if args.ckpt_path is not None:
+        to_restore = {"epoch": 0}
+        utils.restart_from_checkpoint(
+            args.ckpt_path,
+            run_variables=to_restore,
+            student=student,
+            teacher=teacher,
+            optimizer=optimizer,
+            fp16_scaler=fp16_scaler,
+            dino_loss=dino_loss,
+        )
+        start_epoch = to_restore["epoch"]
 
     start_time = time.time()
     print("Starting DINO training !")
