@@ -30,6 +30,8 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
 
+from lora import LoRA_ViT_timm 
+
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
@@ -119,6 +121,7 @@ def get_args_parser():
     # Misc
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
         help='Please specify path to the ImageNet training data.')
+    parser.add_argument('--ckpt_path', default=None, type=str, help='Path to checkpoint for loading.')
     parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
@@ -126,6 +129,10 @@ def get_args_parser():
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
+
+    # Finetuning Parameters
+    parser.add_argument("--fine_tuning", default='standard', type=str, help="standard, lora, ewc")
+
     return parser
 
 
@@ -135,6 +142,8 @@ def train_dino(args):
     print("git:\n  {}\n".format(utils.get_sha()))
     print("\n".join("%s: %s" % (k, str(v)) for k, v in sorted(dict(vars(args)).items())))
     cudnn.benchmark = True
+
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # ============ preparing data ... ============
     transform = DataAugmentationDINO(
@@ -163,6 +172,7 @@ def train_dino(args):
             patch_size=args.patch_size,
             drop_path_rate=args.drop_path_rate,  # stochastic depth
         )
+
         teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
         embed_dim = student.embed_dim
     # if the network is a XCiT
@@ -177,7 +187,12 @@ def train_dino(args):
         teacher = torchvision_models.__dict__[args.arch]()
         embed_dim = student.fc.weight.shape[1]
     else:
-        print(f"Unknow architecture: {args.arch}")
+        print(f"Unknown architecture: {args.arch}")
+
+    # if start_epoch > 0:
+        # This is resuming and if args.fine_tuning is anything but standard it makes a difference
+    # if args.fine_tuning == "lora":
+        # student = LoRA_ViT_timm(vit_model=student, r=4, alpha=4, num_classes=0)
 
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
@@ -192,6 +207,7 @@ def train_dino(args):
     )
     # move networks to gpu
     student, teacher = student.cuda(), teacher.cuda()
+    
     # synchronize batch norms (if any)
     if utils.has_batchnorms(student):
         student = nn.SyncBatchNorm.convert_sync_batchnorm(student)
@@ -252,17 +268,19 @@ def train_dino(args):
     print(f"Loss, optimizer and schedulers ready.")
 
     # ============ optionally resume training ... ============
-    to_restore = {"epoch": 0}
-    utils.restart_from_checkpoint(
-        os.path.join(args.output_dir, "checkpoint.pth"),
-        run_variables=to_restore,
-        student=student,
-        teacher=teacher,
-        optimizer=optimizer,
-        fp16_scaler=fp16_scaler,
-        dino_loss=dino_loss,
-    )
-    start_epoch = to_restore["epoch"]
+    start_epoch = 0
+    if args.ckpt_path is not None:
+        to_restore = {"epoch": 0}
+        utils.restart_from_checkpoint(
+            args.ckpt_path,
+            run_variables=to_restore,
+            student=student,
+            teacher=teacher,
+            optimizer=optimizer,
+            fp16_scaler=fp16_scaler,
+            dino_loss=dino_loss,
+        )
+        start_epoch = to_restore["epoch"]
 
     start_time = time.time()
     print("Starting DINO training !")
