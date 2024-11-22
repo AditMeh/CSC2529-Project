@@ -19,6 +19,7 @@ import time
 import math
 import json
 from pathlib import Path
+import copy
 
 import numpy as np
 from PIL import Image
@@ -29,6 +30,8 @@ import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
+
+from minLoRA.minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora
 
 import utils
 import vision_transformer as vits
@@ -173,20 +176,30 @@ def train_dino(args):
 
         teacher = vits.__dict__[args.arch](patch_size=args.patch_size)
         embed_dim = student.embed_dim
-    # if the network is a XCiT
-    elif args.arch in torch.hub.list("facebookresearch/xcit:main"):
-        student = torch.hub.load('facebookresearch/xcit:main', args.arch,
-                                 pretrained=False, drop_path_rate=args.drop_path_rate)
-        teacher = torch.hub.load('facebookresearch/xcit:main', args.arch, pretrained=False)
-        embed_dim = student.embed_dim
-    # otherwise, we check if the architecture is in torchvision models
-    elif args.arch in torchvision_models.__dict__.keys():
-        student = torchvision_models.__dict__[args.arch]()
-        teacher = torchvision_models.__dict__[args.arch]()
-        embed_dim = student.fc.weight.shape[1]
+        
+        if args.ckpt_path is not None:
+            ckpt = torch.load(args.ckpt_path)
+            
+            print(student)
+            state_dict_student = {(key[len('module.backbone.'):] if key.startswith('module.backbone.') else key): value 
+                            for key, value in ckpt["student"].items()}
+            
+            state_dict_teacher = {(key[len('module.backbone.'):] if key.startswith('module.backbone.') else key): value 
+                            for key, value in ckpt["teacher"].items()}
+            
+            student.load_state_dict(state_dict_student, strict=False)
+            teacher.load_state_dict(state_dict_teacher, strict=False)
+
+            add_lora(student)
+            add_lora(teacher)
+        
     else:
         print(f"Unknown architecture: {args.arch}")
 
+    # if start_epoch > 0:
+        # This is resuming and if args.fine_tuning is anything but standard it makes a difference
+    # if args.fine_tuning == "lora":
+        # student = LoRA_ViT_timm(vit_model=student, r=4, alpha=4, num_classes=0)
 
     # multi-crop wrapper handles forward with inputs of different resolutions
     student = utils.MultiCropWrapper(student, DINOHead(
@@ -232,7 +245,11 @@ def train_dino(args):
     ).cuda()
 
     # ============ preparing optimizer ... ============
-    params_groups = utils.get_params_groups(student)
+    # params_groups = utils.get_params_groups(student)
+    params_groups = [
+        {"params": list(get_lora_params(student)), "weight_decay":0},
+    ]
+    
     if args.optimizer == "adamw":
         optimizer = torch.optim.AdamW(params_groups)  # to use with ViTs
     elif args.optimizer == "sgd":
@@ -287,9 +304,15 @@ def train_dino(args):
             epoch, fp16_scaler, args)
 
         # ============ writing logs ... ============
+        
+        student_copy = copy.deepcopy(student)
+        teacher_copy = copy.deepcopy(teacher)
+        merge_lora(student_copy)
+        merge_lora(teacher_copy)
+        
         save_dict = {
-            'student': student.state_dict(),
-            'teacher': teacher.state_dict(),
+            'student': student_copy.state_dict(),
+            'teacher': teacher_copy.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch + 1,
             'args': args,
