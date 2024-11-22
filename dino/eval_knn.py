@@ -14,6 +14,7 @@
 import os
 import sys
 import argparse
+import json
 
 import torch
 from torch import nn
@@ -27,7 +28,7 @@ import utils
 import vision_transformer as vits
 
 
-def extract_feature_pipeline(args):
+def extract_feature_pipeline(args, model=None):
     # ============ preparing data ... ============
     transform = pth_transforms.Compose([
         pth_transforms.Resize(256, interpolation=3),
@@ -55,21 +56,23 @@ def extract_feature_pipeline(args):
     )
     print(f"Data loaded with {len(dataset_train)} train and {len(dataset_val)} val imgs.")
 
-    # ============ building network ... ============
-    if "vit" in args.arch:
-        model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0)
-        print(f"Model {args.arch} {args.patch_size}x{args.patch_size} built.")
-    elif "xcit" in args.arch:
-        model = torch.hub.load('facebookresearch/xcit:main', args.arch, num_classes=0)
-    elif args.arch in torchvision_models.__dict__.keys():
-        model = torchvision_models.__dict__[args.arch](num_classes=0)
-        model.fc = nn.Identity()
-    else:
-        print(f"Architecture {args.arch} non supported")
-        sys.exit(1)
-    model.cuda()
-    utils.load_pretrained_weights(model, args.pretrained_weights, args.checkpoint_key, args.arch, args.patch_size)
-    model.eval()
+
+    if model is None:
+        # ============ building network ... ============
+        if "vit" in args.arch:
+            model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0)
+            print(f"Model {args.arch} {args.patch_size}x{args.patch_size} built.")
+        elif "xcit" in args.arch:
+            model = torch.hub.load('facebookresearch/xcit:main', args.arch, num_classes=0)
+        elif args.arch in torchvision_models.__dict__.keys():
+            model = torchvision_models.__dict__[args.arch](num_classes=0)
+            model.fc = nn.Identity()
+        else:
+            print(f"Architecture {args.arch} non supported")
+            sys.exit(1)
+        model.cuda()
+        utils.load_pretrained_weights(model, args.pretrained_weights, args.checkpoint_key, args.arch, args.patch_size)
+        model.eval()
 
     # ============ extract features ... ============
     print("Extracting features for train set...")
@@ -190,7 +193,7 @@ class ReturnIndexDataset(datasets.ImageFolder):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Evaluation with weighted k-NN on ImageNet')
-    parser.add_argument('--batch_size_per_gpu', default=128, type=int, help='Per-GPU batch-size')
+    parser.add_argument('--batch_size_per_gpu', default=512, type=int, help='Per-GPU batch-size')
     parser.add_argument('--nb_knn', default=[10, 20, 100, 200], nargs='+', type=int,
         help='Number of NN to use. 20 is usually working the best.')
     parser.add_argument('--temperature', default=0.07, type=float,
@@ -212,6 +215,8 @@ if __name__ == '__main__':
     parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     parser.add_argument("--eval_split", default="val", type=str, help="Split to evaluate the KNN Classification")
     parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
+    parser.add_argument("--json_path", default=None, required=False, type=str, help="path to results json file to put outputs into")
+    parser.add_argument("--json_key", default=None, required=False, type=str, help="key to pass results into json")
     args = parser.parse_args()
 
     utils.init_distributed_mode(args)
@@ -235,9 +240,36 @@ if __name__ == '__main__':
             train_labels = train_labels.cuda()
             test_labels = test_labels.cuda()
 
+        results = {}
+        results[args.pretrained_weights.split("/")[-1]] = {}
+        results[args.pretrained_weights.split("/")[-1]][args.eval_split] = {}
+
+
         print("Features are ready!\nStart the k-NN classification.")
         for k in args.nb_knn:
             top1, top5 = knn_classifier(train_features, train_labels,
                 test_features, test_labels, k, args.temperature)
             print(f"{k}-NN classifier result: Top1: {top1}, Top5: {top5}")
+
+            results[args.pretrained_weights.split("/")[-1]][args.eval_split][k] = {
+                "top1 acc": top1,
+                "top5 acc": top5,
+            }
+
+        if args.json_path is not None:
+            with open(args.json_path, "r+") as f:
+                json_file = json.load(f)
+
+        if args.json_key not in json_file.keys():
+            json_file[args.json_key] = results
+        else:
+            if args.pretrained_weights.split("/")[-1] not in json_file[args.json_key].keys():
+                json_file[args.json_key][args.pretrained_weights.split("/")[-1]] = results
+            else:
+                for key in results[args.pretrained_weights.split("/")[-1]].keys():
+                    json_file[args.json_key][args.pretrained_weights.split("/")[-1]][key] = results[args.pretrained_weights.split("/")[-1]][key]
+
+        with open(args.json_path, "w+") as f:
+            json.dump(json_file, f, indent=4)
+
     dist.barrier()

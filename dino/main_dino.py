@@ -282,6 +282,10 @@ def train_dino(args):
         )
         start_epoch = to_restore["epoch"]
 
+    student_ewc = None
+    if args.fine_tuning == "ewc":
+        student_ewc = utils.EWC(student, data_loader, teacher, fp16_scaler, dino_loss)
+
     start_time = time.time()
     print("Starting DINO training !")
     for epoch in range(start_epoch, args.epochs):
@@ -290,7 +294,7 @@ def train_dino(args):
         # ============ training one epoch of DINO ... ============
         train_stats = train_one_epoch(student, teacher, teacher_without_ddp, dino_loss,
             data_loader, optimizer, lr_schedule, wd_schedule, momentum_schedule,
-            epoch, fp16_scaler, args)
+            epoch, fp16_scaler, ewc=student_ewc, importance=0.4, args=args)
 
         # ============ writing logs ... ============
         save_dict = {
@@ -318,7 +322,7 @@ def train_dino(args):
 
 def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loader,
                     optimizer, lr_schedule, wd_schedule, momentum_schedule,epoch,
-                    fp16_scaler, args):
+                    fp16_scaler, ewc=None, importance=None, args=None):
     metric_logger = utils.MetricLogger(delimiter="  ")
     header = 'Epoch: [{}/{}]'.format(epoch, args.epochs)
     for it, (images, _) in enumerate(metric_logger.log_every(data_loader, 10, header)):
@@ -336,6 +340,10 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
             student_output = student(images)
             loss = dino_loss(student_output, teacher_output, epoch)
+
+            if ewc is not None:
+                loss = loss + importance * ewc.penalty(student)
+
 
         if not math.isfinite(loss.item()):
             print("Loss is {}, stopping training".format(loss.item()), force=True)
