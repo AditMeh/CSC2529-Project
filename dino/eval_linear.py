@@ -68,7 +68,7 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "harmful"), transform=val_transform)
+    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "test"), transform=val_transform)
     val_loader = torch.utils.data.DataLoader(
         dataset_val,
         batch_size=args.batch_size_per_gpu,
@@ -274,7 +274,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size_per_gpu', default=128, type=int, help='Per-GPU batch-size')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
-    parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument('--val_freq', default=1, type=int, help="Epoch frequency for validation.")

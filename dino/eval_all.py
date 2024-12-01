@@ -12,17 +12,22 @@ if __name__ == "__main__":
     parser.add_argument("--eval_type", default="knn", required=True, type=str, help="classification head, knn or linear (not implemented yet)")
     parser.add_argument("--arch", default="vit_tiny", required=True, type=str, help="architecture of pretrained model")
     parser.add_argument("--master_port", default="29501", required=True, type=str, help="port for distributed workflow")
+    parser.add_argument("--ckpt_path", default=None, required=False, type=str, help="overload for checkpoints_dir if only one checkpoint is to be evaluated")
 
     args = parser.parse_args()
 
-    ckpts = glob(os.path.join(args.checkpoints_dir, "*.pth"))
+    if args.ckpt_path is None:
+        ckpts = glob(os.path.join(args.checkpoints_dir, "*.pth"))
+    else:
+        ckpts = [args.ckpt_path]
+
     eval_splits = ["val", "test", "train", "harmful", "not_harmful"]
 
     results = {
         "temp": "WO"
     }
-
-    filename = "./results.json"
+    
+    filename = "./results_ckpt_500.json"
 
     if not os.path.exists(f"{filename}"):
         with open(f"{filename}", "w+") as f:
