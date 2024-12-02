@@ -78,7 +78,10 @@ def extract_feature_pipeline(args):
     test_features = extract_features(model, data_loader_val, args.use_cuda)
 
     if utils.get_rank() == 0:
-        train_features = nn.functional.normalize(train_features, dim=1, p=2)
+        if args.fit_split == "train":
+            train_features = nn.functional.normalize(train_features, dim=1, p=2)
+        elif args.fit_split == "test":
+            test_features = nn.functional.normalize(test_features, dim=1, p=2)
         test_features = nn.functional.normalize(test_features, dim=1, p=2)
 
     train_labels = torch.tensor([s[-1] for s in dataset_train.samples]).long()
@@ -211,6 +214,7 @@ if __name__ == '__main__':
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
     parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     parser.add_argument("--eval_split", default="val", type=str, help="Split to evaluate the KNN Classification")
+    parser.add_argument("--fit_split", default="train", type=str, help="Split to fit the KNN Classification")
     parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
     args = parser.parse_args()
 

@@ -23,6 +23,8 @@ import torch.backends.cudnn as cudnn
 from torchvision import datasets
 from torchvision import transforms as pth_transforms
 from torchvision import models as torchvision_models
+from minLoRA.minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora, LoRAParametrization
+
 
 import utils
 import vision_transformer as vits
@@ -39,18 +41,10 @@ def eval_linear(args):
     if args.arch in vits.__dict__.keys():
         model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0)
         embed_dim = model.embed_dim * (args.n_last_blocks + int(args.avgpool_patchtokens))
-    # if the network is a XCiT
-    elif "xcit" in args.arch:
-        model = torch.hub.load('facebookresearch/xcit:main', args.arch, num_classes=0)
-        embed_dim = model.embed_dim
-    # otherwise, we check if the architecture is in torchvision models
-    elif args.arch in torchvision_models.__dict__.keys():
-        model = torchvision_models.__dict__[args.arch]()
-        embed_dim = model.fc.weight.shape[1]
-        model.fc = nn.Identity()
     else:
         print(f"Unknow architecture: {args.arch}")
         sys.exit(1)
+
     model.cuda()
     model.eval()
     # load weights to evaluate
@@ -68,23 +62,33 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "harmful"), transform=val_transform)
-    val_loader = torch.utils.data.DataLoader(
-        dataset_val,
-        batch_size=args.batch_size_per_gpu,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
 
-    if args.evaluate:
-        # utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size)
-        utils.restart_from_checkpoint(
-            os.path.join(args.output_dir, "checkpoint.pth.tar"),
-            state_dict=linear_classifier,
+    if args.eval_set == "val":
+        dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "val"), transform=val_transform)
+        val_loader = torch.utils.data.DataLoader(
+            dataset_val,
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
         )
-        test_stats = validate_network(val_loader, model, linear_classifier, args.n_last_blocks, args.avgpool_patchtokens)
-        print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
-        return
+    elif args.eval_set == "test":
+        dataset_val = datasets.ImageFolder(os.path.join(args.data_path, "test"), transform=val_transform)
+        val_loader = torch.utils.data.DataLoader(
+            dataset_val,
+            batch_size=args.batch_size_per_gpu,
+            num_workers=args.num_workers,
+            pin_memory=True,
+        )
+
+    # if args.evaluate:
+    #     # utils.load_pretrained_linear_weights(linear_classifier, args.arch, args.patch_size)
+    #     utils.restart_from_checkpoint(
+    #         os.path.join(args.output_dir, "checkpoint.pth.tar"),
+    #         state_dict=linear_classifier,
+    #     )
+    #     test_stats = validate_network(val_loader, model, linear_classifier, args.n_last_blocks, args.avgpool_patchtokens)
+    #     print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
+    #     return
 
     train_transform = pth_transforms.Compose([
         pth_transforms.RandomResizedCrop(224),
@@ -92,7 +96,7 @@ def eval_linear(args):
         pth_transforms.ToTensor(),
         pth_transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
-    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, "train"), transform=train_transform)
+    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, args.train_set), transform=train_transform)
     sampler = torch.utils.data.distributed.DistributedSampler(dataset_train)
     train_loader = torch.utils.data.DataLoader(
         dataset_train,
@@ -114,13 +118,13 @@ def eval_linear(args):
 
     # Optionally resume from a checkpoint
     to_restore = {"epoch": 0, "best_acc": 0.}
-    utils.restart_from_checkpoint(
-        os.path.join(args.output_dir, "checkpoint.pth.tar"),
-        run_variables=to_restore,
-        state_dict=linear_classifier,
-        optimizer=optimizer,
-        scheduler=scheduler,
-    )
+    # # utils.restart_from_checkpoint(
+    # #     os.path.join(args.output_dir, "checkpoint.pth.tar"),
+    # #     run_variables=to_restore,
+    # #     state_dict=linear_classifier,
+    # #     optimizer=optimizer,
+    # #     scheduler=scheduler,
+    # # )
     start_epoch = to_restore["epoch"]
     best_acc = to_restore["best_acc"]
 
@@ -149,7 +153,7 @@ def eval_linear(args):
                 "scheduler": scheduler.state_dict(),
                 "best_acc": best_acc,
             }
-            torch.save(save_dict, os.path.join(args.output_dir, "checkpoint.pth.tar"))
+            # torch.save(save_dict, os.path.join(args.output_dir, "checkpoint.pth.tar"))
     print("Training of the supervised linear classifier on frozen features completed.\n"
                 "Top-1 test accuracy: {acc:.1f}".format(acc=best_acc))
 
@@ -274,12 +278,15 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size_per_gpu', default=128, type=int, help='Per-GPU batch-size')
     parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up
         distributed training; see https://pytorch.org/docs/stable/distributed.html""")
-    parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
+    parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
     parser.add_argument('--data_path', default='/path/to/imagenet/', type=str)
     parser.add_argument('--num_workers', default=10, type=int, help='Number of data loading workers per GPU.')
     parser.add_argument('--val_freq', default=1, type=int, help="Epoch frequency for validation.")
     parser.add_argument('--output_dir', default=".", help='Path to save logs and checkpoints')
     parser.add_argument('--num_labels', default=1000, type=int, help='Number of labels for linear classifier')
     parser.add_argument('--evaluate', dest='evaluate', action='store_true', help='evaluate model on validation set')
+    parser.add_argument('--eval_set', type=str, help='What evaluation set to use')
+    parser.add_argument('--train_set', default="train", type=str, help='What train set to use')
+
     args = parser.parse_args()
     eval_linear(args)

@@ -31,8 +31,8 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 from torchvision import models as torchvision_models
 
-from minLoRA.minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora
-
+from minLoRA.minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora, LoRAParametrization
+from functools import partial
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
@@ -132,7 +132,7 @@ def get_args_parser():
     parser.add_argument("--local-rank", default=0, type=int, help="Please ignore and do not set this argument.")
 
     # Finetuning Parameters
-    parser.add_argument("--fine_tuning", default='standard', type=str, help="standard, lora, ewc")
+    parser.add_argument("--lora_rank", default=4, type=int)
 
     return parser
 
@@ -190,8 +190,14 @@ def train_dino(args):
             student.load_state_dict(state_dict_student, strict=False)
             teacher.load_state_dict(state_dict_teacher, strict=False)
 
-            add_lora(student)
-            add_lora(teacher)
+            default_lora_config = {  # specify which layers to add lora to, by default only add to linear layers
+                nn.Linear: {
+                    "weight": partial(LoRAParametrization.from_linear, rank=4),
+                },
+            }
+
+            add_lora(student, default_lora_config)
+            add_lora(teacher, default_lora_config)
         
     else:
         print(f"Unknown architecture: {args.arch}")
@@ -305,10 +311,12 @@ def train_dino(args):
 
         # ============ writing logs ... ============
         
-        student_copy = copy.deepcopy(student)
-        teacher_copy = copy.deepcopy(teacher)
-        merge_lora(student_copy)
-        merge_lora(teacher_copy)
+        # student_copy = copy.deepcopy(student)
+        # teacher_copy = copy.deepcopy(teacher)
+        # merge_lora(student_copy)
+        # merge_lora(teacher_copy)
+        student_copy = student
+        teacher_copy = teacher
         
         save_dict = {
             'student': student_copy.state_dict(),
