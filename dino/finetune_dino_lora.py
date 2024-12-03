@@ -288,15 +288,15 @@ def train_dino(args):
     start_epoch = 0
     if args.ckpt_path is not None:
         to_restore = {"epoch": 0}
-        utils.restart_from_checkpoint(
-            args.ckpt_path,
-            run_variables=to_restore,
-            student=student,
-            teacher=teacher,
-            optimizer=optimizer,
-            fp16_scaler=fp16_scaler,
-            dino_loss=dino_loss,
-        )
+        # utils.restart_from_checkpoint(
+        #     args.ckpt_path,
+        #     run_variables=to_restore,
+        #     student=student,
+        #     teacher=teacher,
+        #     optimizer=optimizer,
+        #     fp16_scaler=fp16_scaler,
+        #     dino_loss=dino_loss,
+        # )
         start_epoch = to_restore["epoch"]
 
     start_time = time.time()
