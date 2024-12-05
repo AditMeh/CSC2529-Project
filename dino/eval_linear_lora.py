@@ -24,7 +24,7 @@ from torchvision import datasets
 from torchvision import transforms as pth_transforms
 from torchvision import models as torchvision_models
 from minLoRA.minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora, LoRAParametrization
-
+from functools import partial
 
 import utils
 import vision_transformer as vits
@@ -41,6 +41,13 @@ def eval_linear(args):
     if args.arch in vits.__dict__.keys():
         model = vits.__dict__[args.arch](patch_size=args.patch_size, num_classes=0)
         embed_dim = model.embed_dim * (args.n_last_blocks + int(args.avgpool_patchtokens))
+
+        default_lora_config = {  # specify which layers to add lora to, by default only add to linear layers
+            nn.Linear: {
+                "weight": partial(LoRAParametrization.from_linear, rank=args.lora_rank),
+            },
+        }
+        add_lora(model, default_lora_config)        
     else:
         print(f"Unknow architecture: {args.arch}")
         sys.exit(1)
@@ -48,7 +55,10 @@ def eval_linear(args):
     model.cuda()
     model.eval()
     # load weights to evaluate
+    
     utils.load_pretrained_weights(model, args.pretrained_weights, args.checkpoint_key, args.arch, args.patch_size)
+    merge_lora(model)
+    
     print(f"Model {args.arch} built.")
 
     linear_classifier = LinearClassifier(embed_dim, num_labels=args.num_labels)
@@ -287,6 +297,7 @@ if __name__ == '__main__':
     parser.add_argument('--evaluate', dest='evaluate', action='store_true', help='evaluate model on validation set')
     parser.add_argument('--eval_set', type=str, help='What evaluation set to use')
     parser.add_argument('--train_set', default="train", type=str, help='What train set to use')
+    parser.add_argument('--lora_rank', default=4, type=int, help="Lora rank")
 
     args = parser.parse_args()
     eval_linear(args)

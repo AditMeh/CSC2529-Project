@@ -180,7 +180,6 @@ def train_dino(args):
         if args.ckpt_path is not None:
             ckpt = torch.load(args.ckpt_path)
             
-            print(student)
             state_dict_student = {(key[len('module.backbone.'):] if key.startswith('module.backbone.') else key): value 
                             for key, value in ckpt["student"].items()}
             
@@ -192,13 +191,14 @@ def train_dino(args):
 
             default_lora_config = {  # specify which layers to add lora to, by default only add to linear layers
                 nn.Linear: {
-                    "weight": partial(LoRAParametrization.from_linear, rank=4),
+                    "weight": partial(LoRAParametrization.from_linear, rank=args.lora_rank),
                 },
             }
 
             add_lora(student, default_lora_config)
             add_lora(teacher, default_lora_config)
-        
+
+            print(student)
     else:
         print(f"Unknown architecture: {args.arch}")
 
@@ -311,15 +311,10 @@ def train_dino(args):
 
         # ============ writing logs ... ============
         
-        # student_copy = copy.deepcopy(student)
-        # teacher_copy = copy.deepcopy(teacher)
-        # merge_lora(student_copy)
-        # merge_lora(teacher_copy)
-        student_copy = student
-        teacher_copy = teacher
+        teacher_copy = copy.deepcopy(teacher)
         
         save_dict = {
-            'student': student_copy.state_dict(),
+            'student': None,
             'teacher': teacher_copy.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch + 1,
