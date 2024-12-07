@@ -14,7 +14,7 @@ This repository borrows heavily from DINO (https://github.com/facebookresearch/d
 
 ## For fine-tuning
 
-1. Train a DINO model using the steps outlined in the original DINO repository (https://github.com/facebookresearch/dino).
+1. Train a DINO model using the steps outlined in the original DINO repository (https://github.com/facebookresearch/dino), check the `dino` subfolder in this repository for a copy of their README with instructions on how to do this.
 
 ### For LoRA
 
